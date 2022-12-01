@@ -28,6 +28,7 @@ export class JoinCommand extends BaseCommand{
 
         const guild = interaction.guild
         const member = interaction.member
+
         if (member.voice.channel === null) {
             interaction.reply({ content: 'vcに接続していません', ephemeral: true })
             return
@@ -46,6 +47,12 @@ export class JoinCommand extends BaseCommand{
             return
         }
 
+        const prevConnection = getVoiceConnection(interaction.guild.id)
+        if (prevConnection !== undefined) {
+            interaction.reply({ content: 'vcに再接続します', ephemeral: true })
+            prevConnection.disconnect()
+        }
+
         const connection = joinVoiceChannel({
             channelId: vchannel.id,
             guildId: guild.id,
@@ -53,6 +60,7 @@ export class JoinCommand extends BaseCommand{
             selfDeaf: false
         })
 
+        let lastSpeakerUserId = ''; 
         const speakingLock = new Map<string, 0>
         const speakerRecognizers = new Map<string, Recognizer<GrammarRecognizerParam>>
         
@@ -70,48 +78,54 @@ export class JoinCommand extends BaseCommand{
             } else {
                 recognizer = speakerRecognizers.get(userId)!
             }
-            const name = String(Date.now());
-            const path = name + ".raw";
-            const fileStream = fs.createWriteStream(path)
 
             tchannel.sendTyping()
 
             const audioStream = connection.receiver.subscribe(userId, {
                 end: {
                     behavior: EndBehaviorType.AfterSilence,
-                    duration: 500
+                    duration: 750
                 }
             })
 
             const encoder = new OpusEncoder(48000, 2)
+
+
+            const ffmpeg_run = spawn('ffmpeg', ['-loglevel', 'quiet', '-ar', '48000', '-ac', '2', '-f', 's16le', '-i', 'pipe:',
+                '-ar', String(SampleRate), '-ac', '1',
+                '-f', 's16le', '-bufsize', String(BufferSize), '-']);
             
+            let output = ""
+            ffmpeg_run.stdout.on('data', (stdout) => {
+                if (recognizer.acceptWaveform(stdout)) {
+                    const text = output + recognizer.finalResult().text
+                    if (text !== '') {
+                        output = text.split(' ').join('') + '。'
+                    }
+                    recognizer.reset()
+                }
+            })
+
+            ffmpeg_run.stdout.on("end", () => {
+                const result = recognizer.finalResult();
+                if (result.text !== '' || output !== '') {
+                    let message = output + result.text.split(' ').join('')
+                    if (lastSpeakerUserId !== userId) {
+                        message = '__' + user.username + '__\n' + message
+                        lastSpeakerUserId = userId
+                    }
+                    tchannel.send(message)
+                }
+
+                recognizer.reset()
+            })
+
             audioStream.on("data", chunk => {
-                fileStream.write(encoder.decode(chunk))
+                ffmpeg_run.stdin.write(encoder.decode(chunk))
             })
 
             audioStream.on("end", async () => {
-                const ffmpeg_run = spawn('ffmpeg', ['-loglevel', 'quiet', '-ar', '48000', '-ac', '2', '-f', 's16le', '-i', path,
-                    '-ar', String(SampleRate), '-ac', '1',
-                    '-f', 's16le', '-bufsize', String(BufferSize), '-']);
-
-                ffmpeg_run.stdout.on('data', (stdout) => {
-                    recognizer.acceptWaveform(stdout)
-                    // if (recognizer.acceptWaveform(stdout))
-                    //     console.log(recognizer.result());
-                    // else
-                    //     console.log(recognizer.partialResult());
-                    // console.log(recognizer.finalResult());
-                });
-
-                ffmpeg_run.stdout.on("end", () => {
-                    const result = recognizer.finalResult();
-                    if (result.text !== '')
-                        tchannel.send(user.username + ": " + result.text.split(' ').join(''))
-                    
-                    recognizer.reset()
-                    fs.rmSync(path)
-                })
-
+                ffmpeg_run.stdin.end()
                 speakingLock.delete(userId)
             })
         })
@@ -139,7 +153,7 @@ export class ByeCommand extends BaseCommand {
         }
 
         connection.disconnect()
-        interaction.reply('vcから切断されました。録音を終了します。')
+        interaction.reply('vcから切断されました。音声認識を終了します。')
 
     }
 }
