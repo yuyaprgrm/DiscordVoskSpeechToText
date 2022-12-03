@@ -63,8 +63,7 @@ export class JoinCommand extends BaseCommand{
 
         const prevConnection = getVoiceConnection(interaction.guild.id)
         if (prevConnection !== undefined) {
-            interaction.reply({ content: 'vcに再接続します', ephemeral: true })
-            prevConnection.disconnect()
+            prevConnection.destroy()
         }
 
         const connection = joinVoiceChannel({
