@@ -5,7 +5,7 @@ import { ByeCommand, JoinCommand } from './commands'
 dotenv.config()
 
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds | GatewayIntentBits.GuildVoiceStates],
+    intents: [GatewayIntentBits.Guilds | GatewayIntentBits.GuildVoiceStates | GatewayIntentBits.GuildWebhooks],
 })
 
 client.once(Events.ClientReady, () => {
@@ -13,14 +13,17 @@ client.once(Events.ClientReady, () => {
     console.log(client.user!.tag)
 })
 
+const joinCommand = new JoinCommand()
+const byeCommand = new ByeCommand()
+
 client.on(Events.InteractionCreate, async (interaction: BaseInteraction) => {
     if (!interaction.isChatInputCommand()) return;
     switch (interaction.commandName) {
         case 'join':
-            new JoinCommand().execute(interaction)
+            joinCommand.execute(interaction)
             break
         case 'bye':
-            new ByeCommand().execute(interaction)
+            byeCommand.execute(interaction)
             break
     }
 })
