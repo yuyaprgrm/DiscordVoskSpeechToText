@@ -39,7 +39,6 @@
     "dotenv": "^16.0.3",
     "fluent-ffmpeg": "^2.1.2",
     "libsodium-wrappers": "^0.7.10",
-    "memory-streams": "^0.1.3",
-    "vosk": "^0.3.39"
+    "memory-streams": "^0.1.3"
   }
 }
