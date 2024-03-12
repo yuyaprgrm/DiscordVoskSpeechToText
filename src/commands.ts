@@ -1,9 +1,9 @@
 import { CacheType, ChannelType, ChatInputCommandInteraction, CommandInteraction, GuildMember, RESTPostAPIApplicationCommandsJSONBody, SlashCommandBuilder, Snowflake, TextBasedChannel, TextChannel, VoiceChannel, Webhook } from "discord.js";
 import { joinVoiceChannel, AudioReceiveStream, EndBehaviorType, getVoiceConnection } from '@discordjs/voice';
 import { OpusEncoder } from '@discordjs/opus';
-import { GrammarRecognizerParam, Recognizer, SpeakerRecognizerParam } from 'vosk';
-import { SampleRate, VoskModel } from "./vosk-core"; 
 import { spawn } from 'child_process';
+import dotenv from 'dotenv'
+import { AudioConfig, AudioInputStream, SpeechConfig, SpeechRecognizer } from 'microsoft-cognitiveservices-speech-sdk';
 import fs from 'node:fs';
 
 export abstract class BaseCommand {
@@ -12,6 +12,11 @@ export abstract class BaseCommand {
 }
 
 const BufferSize = 4000
+const SampleRate = 16000
+
+dotenv.config()
+const speechConfig = SpeechConfig.fromSubscription(process.env.SPEECH_KEY!, process.env.SPEECH_REGION!);
+speechConfig.speechRecognitionLanguage = "ja-JP";
 
 export class JoinCommand extends BaseCommand{
 
@@ -73,10 +78,9 @@ export class JoinCommand extends BaseCommand{
             selfDeaf: false
         })
 
-        const webhook = await this.getWebhook(tchannel)
+        // const webhook = await this.getWebhook(tchannel)
 
         const speakingLock = new Map<string, 0>
-        const speakerRecognizers = new Map
         
         connection.receiver.speaking.on("start", async userId => {
             const member = await guild.members.fetch(userId);
@@ -85,13 +89,6 @@ export class JoinCommand extends BaseCommand{
                 return;
             }
             speakingLock.set(userId, 0)
-            let recognizer: any;
-            if (!speakerRecognizers.has(userId)) {
-                recognizer = new Recognizer({ model: VoskModel, sampleRate: SampleRate})
-                speakerRecognizers.set(userId, recognizer)
-            } else {
-                recognizer = speakerRecognizers.get(userId)!
-            }
 
             // tchannel.sendTyping()
 
@@ -101,38 +98,23 @@ export class JoinCommand extends BaseCommand{
                     duration: 1000
                 }
             })
+            
 
             const encoder = new OpusEncoder(48000, 2)
 
             const ffmpeg_run = spawn('ffmpeg', ['-loglevel', 'quiet', '-ar', '48000', '-ac', '2', '-f', 's16le', '-i', 'pipe:',
                 '-ar', String(SampleRate), '-ac', '1',
                 '-f', 's16le', '-bufsize', String(BufferSize), '-']);
-            
+
+            let pushStream = AudioInputStream.createPushStream()
+            let audioConfig = AudioConfig.fromStreamInput(pushStream)
             let output = ""
             ffmpeg_run.stdout.on('data', (stdout) => {
-                if (recognizer.acceptWaveform(stdout)) {
-                    const text = output + recognizer.finalResult().text
-                    if (text !== '') {
-                        output = text.split(' ').join('') + '。'
-                    }
-                    recognizer.reset()
-                }
+                pushStream.write(stdout)
             })
 
             ffmpeg_run.stdout.on("end", () => {
-                const result = recognizer.finalResult();
-                if (result.text !== '' || output !== '') {
-                    const message = output + result.text.split(' ').join('')
-                    const url = member.user.avatarURL({forceStatic: false})
- 
-                    webhook.send({
-                        avatarURL: url ?? undefined,
-                        username: member.displayName,
-                        content: message
-                    })
-                }
-
-                recognizer.reset()
+                pushStream.close()
             })
 
             audioStream.on("data", chunk => {
@@ -143,6 +125,17 @@ export class JoinCommand extends BaseCommand{
                 ffmpeg_run.stdin.end()
                 speakingLock.delete(userId)
             })
+
+            
+            let speechRecognizer = new SpeechRecognizer(speechConfig, audioConfig)
+
+            speechRecognizer.recognizeOnceAsync((result) => {
+                if(result.text !== undefined){
+                    tchannel.send(member.displayName + ":" + result.text)
+                }
+                speechRecognizer.close()
+            });
+        
         })
 
         interaction.reply('vcに接続完了しました。音声認識を開始します。')
